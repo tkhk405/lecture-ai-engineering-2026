@@ -185,6 +185,62 @@ def search_graph(query: str) -> dict:
             "max_hops": GRAPH_HOPS}
 
 
+# ---- 第5回 宿題（発展）: 用語を入口にする Graph ----
+
+def matching_lines(content: str, names: list[str]) -> list[str]:
+    """本文を文（句点・改行区切り）に分け、用語か別名を含む文だけを返す。"""
+    lines = [line.strip() for line in re.split(r"(?<=[。！？])|\n", content)]
+    return [line for line in lines if line and any(name.casefold() in line.casefold() for name in names)]
+
+
+def term_page_content(page: dict, names: list[str]) -> str:
+    """用語が出てくるページ1件について、モデルに渡す本文を決める。
+
+    page は load_pages() の1件（title・content など）、names は用語名と別名。
+    空文字を返すと、そのページは回・ページ番号・タイトルだけがモデルに渡る。
+
+    方針: ページのタイトルか章の名前に用語があれば、その用語を説明するページとみなして
+    全文を渡す。それ以外（目次・まとめ・別の主題のページ）は、用語が出てくる文だけを渡す。
+    """
+    heading = (page["title"] + " " + page["section"]).casefold()
+    if any(name.casefold() in heading for name in names):
+        return page["content"]
+    return "\n".join(matching_lines(page["content"], names))
+
+
+def search_term_pages(query: str) -> dict:
+    """用語を入口に、その用語が出てくるページをすべて返す（ベクトル検索は使わない）。"""
+    if not isinstance(query, str) or not query.strip():
+        raise ValueError("検索語が空です。")
+    pages = {page["page_id"]: page for page in load_pages(RAG_SOURCE)}
+    graph = json.loads(RAG_GRAPH.read_text(encoding="utf-8"))
+    text = query.casefold()
+    results = []
+    for term in graph["nodes"]:
+        if term["kind"] != "term":
+            continue
+        # 質問文に、用語名か別名がそのまま含まれている用語だけを入口にする
+        names = [name for name in [term["title"], *term.get("aliases", [])] if name]
+        if not any(name.casefold() in text for name in names):
+            continue
+        # 「mentions」の辺の、用語ではない側がページ。対象資料（第1〜3回）のページだけ残す
+        page_ids = sorted({
+            edge["source"] if edge["target"] == term["id"] else edge["target"]
+            for edge in graph["edges"]
+            if edge["relation"] == "mentions" and term["id"] in (edge["source"], edge["target"])
+        } & pages.keys())
+        found = []
+        for page_id in page_ids:
+            page = pages[page_id]
+            item = {key: page[key] for key in ("page_id", "lecture", "page", "section", "title")}
+            content = term_page_content(page, names)
+            if content:
+                item["content"] = content
+            found.append(item)
+        results.append({"term": term["title"], "page_count": len(found), "pages": found})
+    return {"terms": results}
+
+
 
 def run_full_context(agent, question: str, model, instructions: str, prompt_template: str):
     """全資料を一括投入し、検索ツールを使わずに回答する。"""
