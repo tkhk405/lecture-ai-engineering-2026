@@ -141,3 +141,17 @@ def search_graph(query: str) -> str:
         return json.dumps({"error": str(e)}, ensure_ascii=False)
     except APIError as e:
         return json.dumps({"error": api_error_message(e.code)}, ensure_ascii=False)
+
+
+def search_term(query: str) -> str:
+    """用語集の用語を入口に、その用語が出てくる第1〜3回のページを全件返す。
+
+    queryには調べたい用語を含めて指定する（例: "構造化出力"）。
+    用語ごとに、ページの件数と、回・PDFページ番号・章・タイトルの一覧を返す。
+    """
+    from app.retrieval import search_term_pages
+
+    try:
+        return json.dumps(search_term_pages(query), ensure_ascii=False)
+    except (ValueError, OSError) as e:
+        return json.dumps({"error": str(e), "terms": []}, ensure_ascii=False)
